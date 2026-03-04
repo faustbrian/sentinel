@@ -32,7 +32,7 @@
         "web-auth/webauthn-lib": "^5.2.3"
     },
     "require-dev": {
-        "cline/coding-standard": "^1.7.0",
+        "cline/coding-standard": "^2.0",
         "orchestra/testbench": "^8.0 || ^9.0 || ^10.9",
         "symfony/var-dumper": "^6.0 || ^7.4.6"
     },
