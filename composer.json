@@ -1,0 +1,84 @@
+{
+    "name": "cline/sentinel",
+    "description": "Multi-Factor Authentication package for Laravel applications",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "authentication",
+        "2fa",
+        "totp",
+        "webauthn",
+        "passkey",
+        "multi-factor",
+        "security"
+    ],
+    "authors": [
+        {
+            "name": "Brian Faust",
+            "email": "brian@cline.sh"
+        }
+    ],
+    "require": {
+        "php": "^8.5.0",
+        "bacon/bacon-qr-code": "^3.0.3",
+        "illuminate/auth": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/console": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/contracts": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/database": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/http": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/support": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "pragmarx/google2fa": "^8.0.3",
+        "spatie/laravel-package-tools": "^1.93.0",
+        "web-auth/webauthn-lib": "^5.2.3"
+    },
+    "require-dev": {
+        "cline/coding-standard": "^1.7.0",
+        "orchestra/testbench": "^8.0 || ^9.0 || ^10.9",
+        "symfony/var-dumper": "^6.0 || ^7.4.6"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "autoload": {
+        "psr-4": {
+            "Cline\\Sentinel\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true,
+            "ergebnis/composer-normalize": true,
+            "pestphp/pest-plugin": true
+        }
+    },
+    "extra": {
+        "laravel": {
+            "aliases": {
+                "Sentinel": "Cline\\Sentinel\\Facades\\Sentinel"
+            },
+            "providers": [
+                "Cline\\Sentinel\\SentinelServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "lint": "vendor/bin/ecs check --fix",
+        "refactor": "rector",
+        "test": [
+            "@test:lint",
+            "@test:type-coverage",
+            "@test:unit",
+            "@test:types",
+            "@test:refactor"
+        ],
+        "test:lint": "vendor/bin/ecs check",
+        "test:refactor": "rector --dry-run",
+        "test:type-coverage": "pest --parallel --min=80 --type-coverage",
+        "test:types": "phpstan",
+        "test:unit": "pest --parallel --min=80 --coverage"
+    }
+}

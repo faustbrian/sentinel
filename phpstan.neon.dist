@@ -1,0 +1,12 @@
+parameters:
+    level: max
+    paths:
+        - src
+
+    reportUnmatchedIgnoredErrors: true
+
+    scanDirectories:
+        - tests/Fixtures
+
+    ignoreErrors:
+        - '#Trait Cline\\Sentinel\\Concerns\\HasMultiFactorAuthentication is used zero times and is not analysed#'

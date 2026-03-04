@@ -1,0 +1,824 @@
+<?php declare(strict_types=1);
+
+/**
+ * Copyright (C) Brian Faust
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+use Cline\Sentinel\Database\Models\MultiFactorCredential;
+use Cline\Sentinel\Exceptions\InvalidWebAuthnAssertionException;
+use Cline\Sentinel\WebAuthn\Actions\VerifyAuthenticationAction;
+use Cline\Sentinel\WebAuthn\Support\WebAuthnSerializer;
+use Illuminate\Support\Str;
+use Symfony\Component\Uid\Uuid;
+use Tests\Fixtures\User;
+use Webauthn\AuthenticatorAssertionResponse;
+use Webauthn\AuthenticatorAssertionResponseValidator;
+use Webauthn\PublicKeyCredential;
+use Webauthn\PublicKeyCredentialRequestOptions;
+use Webauthn\PublicKeyCredentialSource;
+use Webauthn\TrustPath\EmptyTrustPath;
+
+beforeEach(function (): void {
+    $this->user = createUser();
+    $this->action = new VerifyAuthenticationAction();
+    $this->serializer = WebAuthnSerializer::create();
+});
+
+describe('Happy Path - Valid Authentication Flow', function (): void {
+    test('successfully verifies authentication and updates credential', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+        $initialCounter = 42;
+
+        // Create a stored credential source
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: ['usb'],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: $initialCounter,
+        );
+
+        $credential = MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+            'last_used_at' => null,
+        ]);
+
+        // Create mock validator that returns updated source with incremented counter
+        $updatedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: ['usb'],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: $storedSource->aaguid,
+            credentialPublicKey: $storedSource->credentialPublicKey,
+            userHandle: (string) $this->user->id,
+            counter: $initialCounter + 1,
+        );
+
+        // Create PublicKeyCredential with matching ID using Mockery partial mock
+        $mockResponse = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class, [
+            'public-key',
+            $credentialId,
+            $mockResponse,
+        ])->makePartial();
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+
+        // Create valid request options
+        $options = Mockery::mock(PublicKeyCredentialRequestOptions::class)->makePartial();
+        $optionsJson = $this->serializer->toJson($options);
+
+        // Mock the validator creation
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock) use ($updatedSource): void {
+            $mock->shouldReceive('check')
+                ->andReturn($updatedSource);
+        });
+
+        // Act
+        $result = $this->action->execute(
+            credentialJson: $credentialJson,
+            optionsJson: $optionsJson,
+            hostname: 'localhost',
+        );
+
+        // Assert
+        expect($result)->toBeInstanceOf(MultiFactorCredential::class)
+            ->and($result->id)->toBe($credential->id)
+            ->and($result->user_id)->toBe($this->user->id);
+
+        // Verify database was updated
+        $credential->refresh();
+
+        $deserializedSource = $this->serializer->fromJson(
+            $credential->secret,
+            PublicKeyCredentialSource::class,
+        );
+
+        expect($deserializedSource->counter)->toBe($initialCounter + 1)
+            ->and($credential->last_used_at)->not->toBeNull()
+            ->and($credential->last_used_at->timestamp)->toBeGreaterThan(now()->subMinute()->timestamp);
+    });
+
+    test('updates last_used_at timestamp on successful authentication', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+        $oldTimestamp = now()->subDay();
+
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 10,
+        );
+
+        $credential = MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now()->subWeek(),
+            'last_used_at' => $oldTimestamp,
+        ]);
+
+        $updatedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: $storedSource->aaguid,
+            credentialPublicKey: $storedSource->credentialPublicKey,
+            userHandle: (string) $this->user->id,
+            counter: 11,
+        );
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock) use ($updatedSource): void {
+            $mock->shouldReceive('check')->andReturn($updatedSource);
+        });
+
+        // Act
+        $this->action->execute($credentialJson, $optionsJson, 'localhost');
+
+        // Assert
+        $credential->refresh();
+        expect($credential->last_used_at->isAfter($oldTimestamp))->toBeTrue()
+            ->and($credential->last_used_at->isAfter(now()->subMinute()))->toBeTrue();
+    });
+
+    test('successfully authenticates with passkey type credential', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: ['internal'],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 5,
+        );
+
+        $credential = MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'passkey', // Using passkey type
+            'name' => 'Platform Passkey',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        $updatedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: ['internal'],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: $storedSource->aaguid,
+            credentialPublicKey: $storedSource->credentialPublicKey,
+            userHandle: (string) $this->user->id,
+            counter: 6,
+        );
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock) use ($updatedSource): void {
+            $mock->shouldReceive('check')->andReturn($updatedSource);
+        });
+
+        // Act
+        $result = $this->action->execute($credentialJson, $optionsJson, 'localhost');
+
+        // Assert
+        expect($result->id)->toBe($credential->id)
+            ->and($result->type)->toBe('passkey');
+    });
+});
+
+describe('Sad Path - Credential Not Found', function (): void {
+    test('throws exception when credential ID does not match any stored credentials', function (): void {
+        // Arrange - Create a credential with ID that won't match
+        $storedCredentialId = random_bytes(16);
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $storedCredentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 0,
+        );
+
+        MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        // Create credential with different ID
+        $differentCredentialId = random_bytes(16);
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $differentCredentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($credentialJson, $optionsJson, 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'Credential not found.');
+    });
+
+    test('throws exception when no webauthn credentials exist', function (): void {
+        // Arrange - No credentials created
+        $credentialId = random_bytes(16);
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($credentialJson, $optionsJson, 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'Credential not found.');
+    });
+
+    test('ignores totp credentials when searching for webauthn credentials', function (): void {
+        // Arrange - Only create TOTP credential
+        createTotpCredential($this->user);
+
+        $credentialId = random_bytes(16);
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($credentialJson, $optionsJson, 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'Credential not found.');
+    });
+});
+
+describe('Sad Path - Invalid JSON', function (): void {
+    test('throws exception for invalid credential JSON', function (): void {
+        // Arrange
+        $invalidJson = 'not valid json';
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($invalidJson, '{}', 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'Invalid credential JSON.');
+    });
+
+    test('throws exception for malformed credential JSON', function (): void {
+        // Arrange
+        $malformedJson = '{invalid: json}';
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($malformedJson, '{}', 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'Invalid credential JSON.');
+    });
+
+    test('throws exception for empty credential JSON', function (): void {
+        // Arrange
+        $emptyJson = '';
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($emptyJson, '{}', 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'Invalid credential JSON.');
+    });
+
+    test('throws exception for invalid options JSON', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 0,
+        );
+
+        MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $invalidOptionsJson = 'invalid json';
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($credentialJson, $invalidOptionsJson, 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'Invalid authentication options JSON.');
+    });
+
+    test('throws exception for malformed options JSON', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 0,
+        );
+
+        MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $malformedOptionsJson = '{malformed}';
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($credentialJson, $malformedOptionsJson, 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'Invalid authentication options JSON.');
+    });
+});
+
+describe('Sad Path - Invalid Response Type', function (): void {
+    test('throws exception when credential response is not AuthenticatorAssertionResponse', function (): void {
+        // Arrange - Create PublicKeyCredential with wrong response type
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = random_bytes(16);
+        $publicKeyCredential->response = new stdClass(); // Wrong type
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($credentialJson, $optionsJson, 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'Invalid credential response type. Expected assertion response.');
+    });
+});
+
+describe('Sad Path - Validation Failures', function (): void {
+    test('throws exception when ceremony validation fails', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 0,
+        );
+
+        MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        // Mock validator to throw exception
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock): void {
+            $mock->shouldReceive('check')
+                ->andThrow(new Exception('Signature validation failed'));
+        });
+
+        // Act & Assert
+        expect(fn () => $this->action->execute($credentialJson, $optionsJson, 'localhost'))
+            ->toThrow(InvalidWebAuthnAssertionException::class, 'WebAuthn assertion verification failed: Signature validation failed');
+    });
+
+    test('wraps validation exceptions with descriptive message', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 0,
+        );
+
+        MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        $originalException = new RuntimeException('Counter validation failed');
+
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock) use ($originalException): void {
+            $mock->shouldReceive('check')->andThrow($originalException);
+        });
+
+        // Act & Assert
+        try {
+            $this->action->execute($credentialJson, $optionsJson, 'localhost');
+            $this->fail('Expected InvalidWebAuthnAssertionException to be thrown');
+        } catch (InvalidWebAuthnAssertionException $e) {
+            expect($e->getMessage())->toContain('WebAuthn assertion verification failed')
+                ->and($e->getMessage())->toContain('Counter validation failed')
+                ->and($e->getPrevious())->toBe($originalException);
+        }
+    });
+});
+
+describe('Edge Cases - Credential Lookup with Encoding', function (): void {
+    test('correctly finds credential using mb_convert_encoding', function (): void {
+        // Arrange - Create multiple credentials
+        $targetCredentialId = random_bytes(32);
+        $otherCredentialId1 = random_bytes(32);
+        $otherCredentialId2 = random_bytes(32);
+
+        foreach ([$otherCredentialId1, $targetCredentialId, $otherCredentialId2] as $index => $credId) {
+            $source = PublicKeyCredentialSource::create(
+                publicKeyCredentialId: $credId,
+                type: 'public-key',
+                transports: [],
+                attestationType: 'none',
+                trustPath: new EmptyTrustPath(),
+                aaguid: Uuid::v4(),
+                credentialPublicKey: random_bytes(77),
+                userHandle: (string) $this->user->id,
+                counter: $index,
+            );
+
+            MultiFactorCredential::query()->create([
+                'id' => Str::uuid()->toString(),
+                'user_id' => $this->user->id,
+                'type' => $index === 1 ? 'webauthn' : 'passkey',
+                'name' => "Key {$index}",
+                'secret' => $this->serializer->toJson($source),
+                'created_at' => now(),
+            ]);
+        }
+
+        $updatedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $targetCredentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 2,
+        );
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $targetCredentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock) use ($updatedSource): void {
+            $mock->shouldReceive('check')->andReturn($updatedSource);
+        });
+
+        // Act
+        $result = $this->action->execute($credentialJson, $optionsJson, 'localhost');
+
+        // Assert
+        expect($result->name)->toBe('Key 1')
+            ->and($result->type)->toBe('webauthn');
+    });
+
+    test('handles binary credential IDs with special characters', function (): void {
+        // Arrange - Create credential with binary ID containing special bytes
+        $credentialId = "\x00\xFF\x80\x7F".random_bytes(12);
+
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 0,
+        );
+
+        MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Special Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        $updatedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: $storedSource->aaguid,
+            credentialPublicKey: $storedSource->credentialPublicKey,
+            userHandle: (string) $this->user->id,
+            counter: 1,
+        );
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock) use ($updatedSource): void {
+            $mock->shouldReceive('check')->andReturn($updatedSource);
+        });
+
+        // Act
+        $result = $this->action->execute($credentialJson, $optionsJson, 'localhost');
+
+        // Assert
+        expect($result->name)->toBe('Special Key');
+    });
+});
+
+describe('Edge Cases - Signature Counter Updates', function (): void {
+    test('updates credential with new counter value from validator', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+        $initialCounter = 100;
+        $newCounter = 150;
+
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: $initialCounter,
+        );
+
+        $credential = MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        $updatedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: $storedSource->aaguid,
+            credentialPublicKey: $storedSource->credentialPublicKey,
+            userHandle: (string) $this->user->id,
+            counter: $newCounter,
+        );
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock) use ($updatedSource): void {
+            $mock->shouldReceive('check')->andReturn($updatedSource);
+        });
+
+        // Act
+        $this->action->execute($credentialJson, $optionsJson, 'localhost');
+
+        // Assert
+        $credential->refresh();
+        $deserializedSource = $this->serializer->fromJson(
+            $credential->secret,
+            PublicKeyCredentialSource::class,
+        );
+
+        expect($deserializedSource->counter)->toBe($newCounter)
+            ->and($deserializedSource->counter)->not->toBe($initialCounter);
+    });
+
+    test('persists all credential source properties after update', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+        $aaguid = Uuid::v4();
+        $publicKey = random_bytes(77);
+        $transports = ['usb', 'nfc'];
+
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: $transports,
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: $aaguid,
+            credentialPublicKey: $publicKey,
+            userHandle: (string) $this->user->id,
+            counter: 10,
+        );
+
+        $credential = MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        $updatedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: $transports,
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: $aaguid,
+            credentialPublicKey: $publicKey,
+            userHandle: (string) $this->user->id,
+            counter: 11,
+        );
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock) use ($updatedSource): void {
+            $mock->shouldReceive('check')->andReturn($updatedSource);
+        });
+
+        // Act
+        $this->action->execute($credentialJson, $optionsJson, 'localhost');
+
+        // Assert - Verify all properties are preserved
+        $credential->refresh();
+        $deserializedSource = $this->serializer->fromJson(
+            $credential->secret,
+            PublicKeyCredentialSource::class,
+        );
+
+        expect($deserializedSource->publicKeyCredentialId)->toBe($credentialId)
+            ->and($deserializedSource->type)->toBe('public-key')
+            ->and($deserializedSource->transports)->toBe($transports)
+            ->and($deserializedSource->aaguid->toRfc4122())->toBe($aaguid->toRfc4122())
+            ->and($deserializedSource->credentialPublicKey)->toBe($publicKey)
+            ->and($deserializedSource->counter)->toBe(11);
+    });
+});
+
+describe('Integration - User Relationship', function (): void {
+    test('returned credential maintains user relationship', function (): void {
+        // Arrange
+        $credentialId = random_bytes(16);
+
+        $storedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: Uuid::v4(),
+            credentialPublicKey: random_bytes(77),
+            userHandle: (string) $this->user->id,
+            counter: 0,
+        );
+
+        MultiFactorCredential::query()->create([
+            'id' => Str::uuid()->toString(),
+            'user_id' => $this->user->id,
+            'type' => 'webauthn',
+            'name' => 'Security Key',
+            'secret' => $this->serializer->toJson($storedSource),
+            'created_at' => now(),
+        ]);
+
+        $updatedSource = PublicKeyCredentialSource::create(
+            publicKeyCredentialId: $credentialId,
+            type: 'public-key',
+            transports: [],
+            attestationType: 'none',
+            trustPath: new EmptyTrustPath(),
+            aaguid: $storedSource->aaguid,
+            credentialPublicKey: $storedSource->credentialPublicKey,
+            userHandle: (string) $this->user->id,
+            counter: 1,
+        );
+
+        $publicKeyCredential = Mockery::mock(PublicKeyCredential::class);
+        $publicKeyCredential->rawId = $credentialId;
+        $publicKeyCredential->response = Mockery::mock(AuthenticatorAssertionResponse::class);
+
+        $credentialJson = $this->serializer->toJson($publicKeyCredential);
+        $optionsJson = $this->serializer->toJson(Mockery::mock(PublicKeyCredentialRequestOptions::class));
+
+        $this->mock(AuthenticatorAssertionResponseValidator::class, function ($mock) use ($updatedSource): void {
+            $mock->shouldReceive('check')->andReturn($updatedSource);
+        });
+
+        // Act
+        $result = $this->action->execute($credentialJson, $optionsJson, 'localhost');
+
+        // Assert
+        expect($result->user)->not->toBeNull()
+            ->and($result->user->id)->toBe($this->user->id)
+            ->and($result->user->email)->toBe($this->user->email);
+    });
+});
