@@ -9,6 +9,9 @@
 
 namespace Cline\Sentinel\Exceptions;
 
+use Facade\IgnitionContracts\BaseSolution;
+use Facade\IgnitionContracts\ProvidesSolution;
+use Facade\IgnitionContracts\Solution;
 use RuntimeException;
 
 /**
@@ -27,7 +30,7 @@ use RuntimeException;
  *
  * @author Brian Faust <brian@cline.sh>
  */
-final class InvalidTotpCodeException extends RuntimeException implements SentinelException
+final class InvalidTotpCodeException extends RuntimeException implements ProvidesSolution, SentinelException
 {
     /**
      * Create an exception for invalid TOTP code.
@@ -38,5 +41,17 @@ final class InvalidTotpCodeException extends RuntimeException implements Sentine
     public static function invalidCode(): self
     {
         return new self('The provided TOTP code is invalid.');
+    }
+
+    public function getSolution(): Solution
+    {
+        /** @var BaseSolution $solution */
+        $solution = BaseSolution::create('Review package usage and configuration.');
+
+        return $solution
+            ->setSolutionDescription('Exception: '.$this->getMessage())
+            ->setDocumentationLinks([
+                'Package documentation' => 'https://github.com/cline/sentinel',
+            ]);
     }
 }
