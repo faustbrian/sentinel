@@ -1,15 +1,17 @@
 ## Table of Contents
 
-1. Overview (`docs/README.md`)
-2. Events (`docs/events.md`)
-3. Mfa (`docs/mfa.md`)
-4. Middleware (`docs/middleware.md`)
-5. Passkeys (`docs/passkeys.md`)
-6. Recovery Codes (`docs/recovery-codes.md`)
-7. Security Keys (`docs/security-keys.md`)
-8. Sudo Mode (`docs/sudo-mode.md`)
-9. Totp (`docs/totp.md`)
-10. Webauthn (`docs/webauthn.md`)
+1. [Overview](#doc-docs-readme) (`docs/README.md`)
+2. [Events](#doc-docs-events) (`docs/events.md`)
+3. [Mfa](#doc-docs-mfa) (`docs/mfa.md`)
+4. [Middleware](#doc-docs-middleware) (`docs/middleware.md`)
+5. [Passkeys](#doc-docs-passkeys) (`docs/passkeys.md`)
+6. [Recovery Codes](#doc-docs-recovery-codes) (`docs/recovery-codes.md`)
+7. [Security Keys](#doc-docs-security-keys) (`docs/security-keys.md`)
+8. [Sudo Mode](#doc-docs-sudo-mode) (`docs/sudo-mode.md`)
+9. [Totp](#doc-docs-totp) (`docs/totp.md`)
+10. [Webauthn](#doc-docs-webauthn) (`docs/webauthn.md`)
+<a id="doc-docs-readme"></a>
+
 A focused, reusable Multi-Factor Authentication package for Laravel applications. Provides TOTP (authenticator apps), WebAuthn/Passkeys, and recovery codes with a clean trait-based API.
 
 ## What Sentinel Does
@@ -194,12 +196,14 @@ Route::middleware(['auth', 'sudo'])->group(function () {
 
 ## Next Steps
 
-- [TOTP Configuration](totp.md) - Set up authenticator app authentication
-- [Recovery Codes](recovery-codes.md) - Emergency backup access
-- [WebAuthn/Passkeys](webauthn.md) - Security key and biometric authentication
-- [Sudo Mode](sudo-mode.md) - Re-verify identity for critical actions
-- [Middleware](middleware.md) - Protect routes with multi-factor requirements
-- [Events](events.md) - Listen to multi-factor lifecycle events
+- [TOTP Configuration](#doc-docs-totp) - Set up authenticator app authentication
+- [Recovery Codes](#doc-docs-recovery-codes) - Emergency backup access
+- [WebAuthn/Passkeys](#doc-docs-webauthn) - Security key and biometric authentication
+- [Sudo Mode](#doc-docs-sudo-mode) - Re-verify identity for critical actions
+- [Middleware](#doc-docs-middleware) - Protect routes with multi-factor requirements
+- [Events](#doc-docs-events) - Listen to multi-factor lifecycle events
+
+<a id="doc-docs-events"></a>
 
 Sentinel dispatches events throughout the multi-factor lifecycle, allowing you to hook into authentication flows for logging, notifications, security monitoring, and custom business logic.
 
@@ -786,6 +790,8 @@ protected $listen = [
     ],
 ];
 ```
+
+<a id="doc-docs-mfa"></a>
 
 Multi-factor authentication significantly enhances account security by requiring users to verify their identity through multiple factors. Sentinel provides a complete multi-factor implementation supporting TOTP (authenticator apps), passkeys, security keys, and recovery codes.
 
@@ -1892,11 +1898,11 @@ public function disableMfa(User $user)
 
 ## Related Documentation
 
-- [Passkeys Integration](./passkeys.md) - Synced WebAuthn credentials
-- [Security Keys Integration](./security-keys.md) - Device-bound credentials
-- [TOTP Setup](./totp.md) - Authenticator app configuration
-- [Events](./events.md) - multi-factor event handling
-- [Testing](./testing.md) - Comprehensive test examples
+- [Passkeys Integration](#doc-docs-passkeys) - Synced WebAuthn credentials
+- [Security Keys Integration](#doc-docs-security-keys) - Device-bound credentials
+- [TOTP Setup](#doc-docs-totp) - Authenticator app configuration
+- [Events](#doc-docs-events) - multi-factor event handling
+- [Testing](#) - Comprehensive test examples
 
 ## External Resources
 
@@ -1904,6 +1910,8 @@ public function disableMfa(User $user)
 - [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
 - [WebAuthn Guide](https://webauthn.guide/) - Interactive tutorial
 - [Google Authenticator](https://support.google.com/accounts/answer/1066447) - TOTP setup
+
+<a id="doc-docs-middleware"></a>
 
 Sentinel provides three middleware classes to enforce multi-factor requirements and security policies across your application.
 
@@ -2144,7 +2152,7 @@ Route::delete('/account', function (Request $request) {
 })->middleware(['auth', 'sudo']);
 ```
 
-See [Sudo Mode](sudo-mode.md) for detailed documentation.
+See [Sudo Mode](#doc-docs-sudo-mode) for detailed documentation.
 
 ## Combining Middleware
 
@@ -2449,6 +2457,8 @@ Route::middleware(['auth'])->group(function () {
     });
 });
 ```
+
+<a id="doc-docs-passkeys"></a>
 
 Passkeys provide passwordless authentication with credentials that sync across a user's devices via iCloud Keychain, Google Password Manager, 1Password, and other password managers. This guide provides production-ready code for integrating passkey support.
 
@@ -3183,9 +3193,11 @@ Platform requirements:
 
 ## Next Steps
 
-- [Security Keys](./security-keys.md) - Device-bound WebAuthn credentials
-- [Recovery Codes](./recovery-codes.md) - Backup authentication method
-- [Events](./events.md) - Listen to passkey registration/usage
+- [Security Keys](#doc-docs-security-keys) - Device-bound WebAuthn credentials
+- [Recovery Codes](#doc-docs-recovery-codes) - Backup authentication method
+- [Events](#doc-docs-events) - Listen to passkey registration/usage
+
+<a id="doc-docs-recovery-codes"></a>
 
 Recovery codes provide emergency backup access when users lose access to their primary multi-factor device. They are one-time use codes that can be used instead of TOTP or WebAuthn.
 
@@ -3580,6 +3592,8 @@ public function verifyMfa(Request $request)
     return back()->withErrors(['recovery_code' => 'Invalid recovery code.']);
 }
 ```
+
+<a id="doc-docs-security-keys"></a>
 
 Security keys are device-bound WebAuthn credentials stored on physical hardware authenticators like YubiKey, Titan Key, or built-in platform authenticators. Unlike passkeys which sync across devices, security keys remain bound to a single physical device, making them ideal for high-security environments and compliance requirements.
 
@@ -4542,10 +4556,10 @@ Route::middleware(['auth', 'verified', 'security-key'])->group(function () {
 
 ## Related Documentation
 
-- [Passkeys Integration](./passkeys.md) - For synced credentials
-- [Multi-Factor Authentication](./mfa.md) - Complete multi-factor guide
-- [WebAuthn Events](./events#webauthn-events.md) - Event handling
-- [Testing Guide](./testing#webauthn-tests.md) - Comprehensive testing
+- [Passkeys Integration](#doc-docs-passkeys) - For synced credentials
+- [Multi-Factor Authentication](#doc-docs-mfa) - Complete multi-factor guide
+- [WebAuthn Events](#) - Event handling
+- [Testing Guide](#) - Comprehensive testing
 
 ## External Resources
 
@@ -4553,6 +4567,8 @@ Route::middleware(['auth', 'verified', 'security-key'])->group(function () {
 - [FIDO Alliance](https://fidoalliance.org/) - FIDO2 specifications
 - [web-auth/webauthn-framework](https://github.com/web-auth/webauthn-framework) - PHP library docs
 - [YubiKey Documentation](https://www.yubico.com/resources/) - Hardware key specifics
+
+<a id="doc-docs-sudo-mode"></a>
 
 Sudo Mode provides an additional security layer for sensitive operations by requiring users to re-authenticate before performing critical actions, even when already logged in.
 
@@ -5048,6 +5064,8 @@ class SudoController extends Controller
 }
 ```
 
+<a id="doc-docs-totp"></a>
+
 TOTP (Time-based One-Time Password) provides multi-factor authentication using authenticator apps like Google Authenticator, Authy, Microsoft Authenticator, or 1Password.
 
 ## How TOTP Works
@@ -5370,6 +5388,8 @@ Ensure issuer and account name are URL-encoded:
 // The package handles this automatically
 $uri = $setup->getProvisioningUri();
 ```
+
+<a id="doc-docs-webauthn"></a>
 
 WebAuthn provides modern, phishing-resistant authentication using hardware security keys (YubiKey, Titan) or platform authenticators (Touch ID, Face ID, Windows Hello).
 
