@@ -1,15 +1,15 @@
 ## Table of Contents
 
-1. [Overview](#doc-docs-readme) (`docs/README.md`)
-2. [Events](#doc-docs-events) (`docs/events.md`)
-3. [Mfa](#doc-docs-mfa) (`docs/mfa.md`)
-4. [Middleware](#doc-docs-middleware) (`docs/middleware.md`)
-5. [Passkeys](#doc-docs-passkeys) (`docs/passkeys.md`)
-6. [Recovery Codes](#doc-docs-recovery-codes) (`docs/recovery-codes.md`)
-7. [Security Keys](#doc-docs-security-keys) (`docs/security-keys.md`)
-8. [Sudo Mode](#doc-docs-sudo-mode) (`docs/sudo-mode.md`)
-9. [Totp](#doc-docs-totp) (`docs/totp.md`)
-10. [Webauthn](#doc-docs-webauthn) (`docs/webauthn.md`)
+1. [Overview](#doc-docs-readme)
+2. [Events](#doc-docs-events)
+3. [Mfa](#doc-docs-mfa)
+4. [Middleware](#doc-docs-middleware)
+5. [Passkeys](#doc-docs-passkeys)
+6. [Recovery Codes](#doc-docs-recovery-codes)
+7. [Security Keys](#doc-docs-security-keys)
+8. [Sudo Mode](#doc-docs-sudo-mode)
+9. [Totp](#doc-docs-totp)
+10. [Webauthn](#doc-docs-webauthn)
 <a id="doc-docs-readme"></a>
 
 A focused, reusable Multi-Factor Authentication package for Laravel applications. Provides TOTP (authenticator apps), WebAuthn/Passkeys, and recovery codes with a clean trait-based API.
