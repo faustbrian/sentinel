@@ -22,12 +22,7 @@
         "php": "^8.5.0",
         "bacon/bacon-qr-code": "^3.0.3",
         "facade/ignition-contracts": "^1.0.2",
-        "illuminate/auth": "^10.0 || ^11.0 || ^12.0 || ^13.0",
-        "illuminate/console": "^10.0 || ^11.0 || ^12.0 || ^13.0",
-        "illuminate/contracts": "^10.0 || ^11.0 || ^12.0 || ^13.0",
-        "illuminate/database": "^10.0 || ^11.0 || ^12.0 || ^13.0",
-        "illuminate/http": "^10.0 || ^11.0 || ^12.0 || ^13.0",
-        "illuminate/support": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "laravel/framework": "^10.0 || ^11.0 || ^12.0 || ^13.0",
         "pragmarx/google2fa": "^8.0.3",
         "spatie/laravel-package-tools": "^1.93.0",
         "web-auth/webauthn-lib": "^5.2.3"
